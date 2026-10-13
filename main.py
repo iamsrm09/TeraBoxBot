@@ -4,11 +4,10 @@ from telebot import types
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = "@Film4You_Official"
 CHANNEL_LINK = "https://t.me/Film4You_Official"
-BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share" # yaha apna bot username daal dena
+BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share" # yaha apna bot username daal de
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- NEW WORKING APIs FOR terasharelink.com ---
 APIS = [
     "https://terabox-dl.hydraax.workers.dev/api?url={}",
     "https://terabox.hnn.workers.dev/api?url={}",
@@ -19,9 +18,7 @@ APIS = [
 def get_direct_link(tera_url):
     for api in APIS:
         try:
-            print(f"Trying: {api.format(tera_url)}")
             r = requests.get(api.format(tera_url), timeout=20).json()
-            print(r)
             link = r.get("direct_link") or r.get("download_link") or r.get("url") or r.get("link") or r.get("dlink") or r.get("directlink")
             if link:
                 return {
@@ -30,8 +27,7 @@ def get_direct_link(tera_url):
                     "thumb": r.get("thumbnail") or r.get("thumb") or r.get("image"),
                     "direct": link
                 }
-        except Exception as e:
-            print(f"API Error: {e}")
+        except:
             continue
     return None
 
@@ -62,6 +58,18 @@ def welcome_btn():
     markup.add(types.InlineKeyboardButton("🔗 Share Bot", url=BOT_SHARE_LINK))
     return markup
 
+def main_menu_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        types.KeyboardButton("📩 How to Use"),
+        types.KeyboardButton("📢 Film4You Channel")
+    )
+    markup.add(
+        types.KeyboardButton("🔗 Share Bot"),
+        types.KeyboardButton("📞 Contact")
+    )
+    return markup
+
 @bot.message_handler(commands=['start'])
 def start(m):
     if not is_joined(m.from_user.id):
@@ -71,7 +79,8 @@ def start(m):
         bot.send_message(m.chat.id, "⚠️ **Access Locked**\n\nPlease join @Film4You_Official to continue.", reply_markup=markup, parse_mode="Markdown")
         return
     txt = "📦 **Welcome to AllTeraBoxBot - Pro**\n\n🚀 **Fastest TeraBox Downloader**\nJust send me any TeraBox link.\n\n✨ **No Ads | No Waiting | Direct File**"
-    bot.send_message(m.chat.id, txt, reply_markup=welcome_btn(), parse_mode="Markdown")
+    bot.send_message(m.chat.id, txt, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
+    bot.send_message(m.chat.id, "👇 **Options:**", reply_markup=welcome_btn(), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: True)
 def cb(c):
@@ -82,10 +91,30 @@ def cb(c):
         else:
             bot.answer_callback_query(c.id, "❌ Pehle join karo!", show_alert=True)
     if c.data == "how_to":
-        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link milega\n\nEx: `https://terasharelink.com/s/...`", parse_mode="Markdown")
+        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link / File milega\n\nEx: `https://terasharelink.com/s/...`", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "📩 How to Use")
+def howto_btn(m):
+    bot.send_message(m.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link milega", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "📢 Film4You Channel")
+def channel_btn(m):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
+    bot.send_message(m.chat.id, "📢 **Official Channel Join Karo**", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: m.text == "🔗 Share Bot")
+def share_btn(m):
+    bot.send_message(m.chat.id, f"🔗 **Bot Share Karo:**\n{BOT_SHARE_LINK}")
+
+@bot.message_handler(func=lambda m: m.text == "📞 Contact")
+def contact_btn(m):
+    bot.send_message(m.chat.id, "📞 **Contact:** @Film4You_Official")
 
 @bot.message_handler(func=lambda m: True)
 def handle(m):
+    if m.text in ["📩 How to Use", "📢 Film4You Channel", "🔗 Share Bot", "📞 Contact", "/start", "/help"]:
+        return
     if not is_joined(m.from_user.id):
         start(m); return
     match = re.search(r'https?://[^\s]+', m.text)
@@ -97,7 +126,7 @@ def handle(m):
     data = get_direct_link(url)
 
     if not data:
-        bot.edit_message_text("❌ **Failed to fetch link.**\n\nAPI down hai, 10 sec baad fir se try karo.", m.chat.id, wait.message_id, parse_mode="Markdown")
+        bot.edit_message_text("❌ **Failed to fetch link.**\n10 sec baad fir se try karo.", m.chat.id, wait.message_id, parse_mode="Markdown")
         return
 
     title = data["title"]
@@ -115,7 +144,6 @@ def handle(m):
 
     caption = f"🎬 **{title}**\n\n📁 **Size:** {size_str}"
 
-    # 500MB se kam to direct file bhej de
     if mb > 0 and mb < 500:
         try:
             bot.edit_message_text(f"{caption}\n\n⏳ **Uploading file...**", m.chat.id, wait.message_id, parse_mode="Markdown")
@@ -132,7 +160,6 @@ def handle(m):
         except Exception as e:
             print(f"Upload fail: {e}")
 
-    # 500MB se zyada - sirf size + buttons, koi extra text nahi
     try:
         if thumb:
             bot.send_photo(m.chat.id, thumb, caption=caption, reply_markup=markup, parse_mode="Markdown")
@@ -142,5 +169,5 @@ def handle(m):
     except:
         bot.edit_message_text(caption, m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
 
-print("Bot Started - Final Pro")
+print("Bot Started - Final + Menu")
 bot.infinity_polling()
