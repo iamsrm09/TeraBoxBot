@@ -15,7 +15,7 @@ FREE_APIS = [
 def get_direct_link(tera_url):
     for api_template in FREE_APIS:
         try:
-            r = requests.get(api_template.format(tera_url), timeout=25).json()
+            r = requests.get(api_template.format(tera_url), timeout=30).json()
             link = r.get("direct_link") or r.get("download_link") or r.get("url") or r.get("link")
             if link:
                 return r
@@ -30,21 +30,27 @@ def is_joined(user_id):
     except:
         return True
 
+def parse_size_to_mb(size_str):
+    try:
+        size_str = size_str.lower()
+        if "gb" in size_str:
+            num = float(re.findall(r"[\d\.]+", size_str)[0])
+            return num * 1024
+        if "mb" in size_str:
+            return float(re.findall(r"[\d\.]+", size_str)[0])
+        return 0
+    except:
+        return 0
+
 @bot.message_handler(commands=['start'])
 def start(m):
     if not is_joined(m.from_user.id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Join Film4You Official", url=CHANNEL_LINK))
-        markup.add(types.InlineKeyboardButton("✅ I Joined, Check Again", callback_data="check_join"))
-        bot.send_message(m.chat.id, "⚠️ **Access Locked**\n\nTo use this bot, you must join @Film4You_Official first.", reply_markup=markup, parse_mode="Markdown")
+        markup.add(types.InlineKeyboardButton("✅ I Joined", callback_data="check_join"))
+        bot.send_message(m.chat.id, "⚠️ **Access Locked**\n\nJoin @Film4You_Official to continue.", reply_markup=markup, parse_mode="Markdown")
         return
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📥 How To Use", callback_data="how"),
-        types.InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK)
-    )
-    bot.send_message(m.chat.id, "📦 **AllTeraBoxBot - PRO**\n\nSend any TeraBox link and get instant Download + Watch buttons.", reply_markup=markup, parse_mode="Markdown")
+    bot.send_message(m.chat.id, "📦 **AllTeraBoxBot PRO**\n\nSend me any TeraBox link.", parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
@@ -53,16 +59,13 @@ def callbacks(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
             start(call.message)
         else:
-            bot.answer_callback_query(call.id, "❌ Join @Film4You_Official first!", show_alert=True)
-    if call.data == "how":
-        bot.send_message(call.message.chat.id, "1. Copy TeraBox link\n2. Paste here\n3. Click Watch or Download", parse_mode="Markdown")
+            bot.answer_callback_query(call.id, "❌ Please join @Film4You_Official first!", show_alert=True)
 
 @bot.message_handler(func=lambda m: True)
 def handle(m):
     if not is_joined(m.from_user.id):
         start(m)
         return
-
     match = re.search(r'https?://[^\s]+', m.text)
     if not match: return
     tera_link = match.group(0)
@@ -72,15 +75,15 @@ def handle(m):
     data = get_direct_link(tera_link)
 
     if not data:
-        bot.edit_message_text("❌ Link expired/private or API down. Try again.", m.chat.id, wait.message_id)
+        bot.edit_message_text("❌ Failed to fetch link.", m.chat.id, wait.message_id)
         return
 
     title = data.get("title", "TeraBox File")
-    size = data.get("size", "Unknown")
+    size_str = data.get("size", "Unknown")
     thumb = data.get("thumbnail") or data.get("thumb")
     direct = data.get("direct_link") or data.get("download_link") or data.get("url")
+    size_mb = parse_size_to_mb(size_str)
 
-    # PROFESSIONAL 2 BUTTON LAYOUT
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("▶️ Watch Online", url=direct),
@@ -88,17 +91,34 @@ def handle(m):
     )
     markup.add(types.InlineKeyboardButton("📢 Join Film4You", url=CHANNEL_LINK))
 
-    caption = f"✅ **File Ready**\n\n📄 **Name:** `{title}`\n📁 **Size:** {size}\n\n👇 **Choose option:**\n▶️ Watch = Online Stream\n⬇️ Download = Save in Gallery"
+    caption = f"🎬 **{title}**\n\n📁 **Size:** {size_str}\n\n👇 **Select Option**"
 
+    # If < 450MB -> send file
+    if size_mb > 0 and size_mb < 450:
+        try:
+            bot.edit_message_text(f"{caption}\n\n⏳ Uploading...", m.chat.id, wait.message_id, parse_mode="Markdown")
+            r = requests.get(direct, stream=True, timeout=180)
+            file_name = f"{title[:50]}.mp4"
+            with open(file_name, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024*1024):
+                    if chunk: f.write(chunk)
+            with open(file_name, 'rb') as f:
+                bot.send_document(m.chat.id, f, caption=caption, parse_mode="Markdown", reply_markup=markup, visible_file_name=file_name)
+            os.remove(file_name)
+            bot.delete_message(m.chat.id, wait.message_id)
+            return
+        except:
+            pass
+
+    # > 450MB -> only buttons + size
     try:
         if thumb:
             bot.send_photo(m.chat.id, thumb, caption=caption, reply_markup=markup, parse_mode="Markdown")
             bot.delete_message(m.chat.id, wait.message_id)
-            bot.send_message(m.chat.id, f"🔗 **Direct Link:**\n`{direct}`", parse_mode="Markdown")
         else:
             bot.edit_message_text(caption, m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
     except:
-        bot.edit_message_text(f"{caption}\n\n{direct}", m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
+        bot.edit_message_text(caption, m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
 
-print("Bot Started - @Film4You_Official Force Join + Watch/Download")
+print("Bot Started Clean - @Film4You_Official")
 bot.infinity_polling()
