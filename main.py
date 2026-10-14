@@ -82,11 +82,11 @@ def start(m):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Join Film4You Official", url=CHANNEL_LINK))
         markup.add(types.InlineKeyboardButton("✅ I Joined", callback_data="check_join"))
-        bot.send_message(m.chat.id, "⚠️ **Access Locked**\n\nPlease join @Film4You_Official to continue.", reply_markup=markup, parse_mode="Markdown")
+        bot.send_message(m.chat.id, "⚠️ **Access Locked**\n\nPlease join @Film4You_Official to continue using the bot.", reply_markup=markup, parse_mode="Markdown")
         return
     txt = "📦 **Welcome to AllTeraBoxBot - Pro**\n\n🚀 **Fastest TeraBox Downloader**\nJust send me any TeraBox link.\n\n✨ **No Ads | No Waiting | Direct File**"
     bot.send_message(m.chat.id, txt, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
-    bot.send_message(m.chat.id, "👇 **Options:**", reply_markup=welcome_btn(), parse_mode="Markdown")
+    bot.send_message(m.chat.id, "👇 **Select an option:**", reply_markup=welcome_btn(), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: True)
 def cb(c):
@@ -95,13 +95,13 @@ def cb(c):
             bot.delete_message(c.message.chat.id, c.message.message_id)
             start(c.message)
         else:
-            bot.answer_callback_query(c.id, "❌ Pehle join karo!", show_alert=True)
+            bot.answer_callback_query(c.id, "❌ Please join the channel first!", show_alert=True)
     if c.data == "how_to":
-        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link / File milega", parse_mode="Markdown")
+        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. Copy TeraBox link\n2. Send it here\n3. Get direct file / download link\n\nExample: `https://terasharelink.com/s/...`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "📩 How to Use")
 def howto_btn(m):
-    bot.send_message(m.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link milega", parse_mode="Markdown")
+    bot.send_message(m.chat.id, "📩 **How to Use**\n\n1. Copy TeraBox link\n2. Send it here\n3. Get direct download link", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "📢 Film4You Channel")
 def channel_btn(m):
@@ -111,7 +111,7 @@ def channel_btn(m):
 
 @bot.message_handler(func=lambda m: m.text == "🔗 Share Bot")
 def share_btn(m):
-    bot.send_message(m.chat.id, f"🔗 **Share:**\n{BOT_SHARE_LINK}")
+    bot.send_message(m.chat.id, f"🔗 **Share this bot:**\n{BOT_SHARE_LINK}")
 
 @bot.message_handler(func=lambda m: m.text == "📞 Contact")
 def contact_btn(m):
@@ -130,7 +130,7 @@ def handle(m):
     wait = bot.send_message(m.chat.id, "⏳ **Processing...**")
     data = get_direct_link(url)
     if not data:
-        bot.edit_message_text("❌ **Failed to fetch link.**\n10 sec baad try karo.", m.chat.id, wait.message_id, parse_mode="Markdown")
+        bot.edit_message_text("❌ **Failed to fetch link.**\nPlease try again after 10 seconds.", m.chat.id, wait.message_id, parse_mode="Markdown")
         return
     title = data["title"]
     size_str = data["size"]
@@ -143,7 +143,7 @@ def handle(m):
     caption = f"🎬 **{title}**\n\n📁 **Size:** {size_str}"
     if mb > 0 and mb < 500:
         try:
-            bot.edit_message_text(f"{caption}\n\n⏳ **Uploading...**", m.chat.id, wait.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"{caption}\n\n⏳ **Uploading file...**", m.chat.id, wait.message_id, parse_mode="Markdown")
             r = requests.get(direct, stream=True, timeout=200)
             fname = f"{title[:30]}.mp4".replace("/","")
             with open(fname, 'wb') as f:
@@ -165,5 +165,5 @@ def handle(m):
     except:
         bot.edit_message_text(caption, m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
 
-print("Bot Started - Final + Menu + Port Fix")
+print("Bot Started - English Version")
 bot.infinity_polling()
