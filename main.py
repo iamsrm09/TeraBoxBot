@@ -8,7 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 RAW_COOKIE = os.getenv("NDUS") or os.getenv("COOKIE") or ""
 CHANNEL_ID = os.getenv("CHANNEL_ID") or "@Film4You_Official"
 CHANNEL_LINK = os.getenv("CHANNEL_LINK") or "https://t.me/Film4You_Official"
-RENDER_URL = os.getenv("RENDER_URL") or "https://teraboxbot-261o.onrender.com"
+RENDER_URL = os.getenv("RENDER_URL") or "https://teraboxbot-251o.onrender.com"
 RENDER_URL = RENDER_URL.rstrip('/')
 
 bot = telebot.TeleBot(BOT_TOKEN)
