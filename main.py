@@ -5,7 +5,10 @@ from flask import Flask, request
 # ================= CONFIG =================
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-NDUS_COOKIE = os.getenv("NDUS_COOKIE") or os.getenv("TERABOX_COOKIE") or os.getenv("COOKIE") # <-- naya add kiya
+# Yaha fix kiya - sab naam se chalega
+NDUS_COOKIE = os.getenv("NDUS") or os.getenv("NDUS_COOKIE") or os.getenv("TERABOX_COOKIE") or ""
+NDUS = NDUS_COOKIE # dono naam se kaam karega, error nahi ayega
+
 CHANNEL_ID = "@Film4You_Official"
 CHANNEL_LINK = "https://t.me/Film4You_Official"
 BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share"
@@ -34,52 +37,25 @@ def auto_delete(chat_id, msg_ids, delay=2700):
     threading.Thread(target=job).start()
 
 def get_direct_link_cookie(tera_url):
-    """Naya function - NDUS cookie se direct link"""
-    if not NDUS:
+    if not NDUS_COOKIE:
         return None
     try:
-        # short url nikalna
         m = re.search(r'/s/([A-Za-z0-9_-]+)', tera_url)
-        if not m:
-            return None
+        if not m: return None
         surl = m.group(1)
-
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Cookie": f"ndus={NDUS}",
+            "Cookie": f"ndus={NDUS_COOKIE}",
             "Referer": "https://www.terabox.com/"
         }
-
-        # 1. Get share list to get fs_id
         list_url = f"https://www.terabox.com/share/list?app_id=250528&shorturl={surl}&root=1"
         r = requests.get(list_url, headers=headers, timeout=15).json()
-
-        if r.get("errno")!= 0 or not r.get("list"):
-            return None
-
+        if r.get("errno")!= 0 or not r.get("list"): return None
         file_info = r["list"][0]
-        fs_id = file_info.get("fs_id")
-        file_name = file_info.get("server_filename")
-
-        # 2. Get dlink
-        dlink_url = f"https://www.terabox.com/share/list?app_id=250528&shorturl={surl}&fs_id={fs_id}&type=dlink"
-        # Actually correct endpoint for download is different, using share api
-        dl_api = "https://www.terabox.com/api/download?app_id=250528&shorturl=" + surl
-        # Try another endpoint
-        params = {
-            "app_id": "250528",
-            "shorturl": surl,
-            "fs_id": fs_id
-        }
-        r2 = requests.get("https://www.terabox.com/share/list", params=params, headers=headers, timeout=15).json()
-        # fallback - use dlink from first response if available
         dlink = file_info.get("dlink")
-        if not dlink and "dlink" in str(r2):
-            dlink = r2.get("dlink") or r2.get("list", [{}])[0].get("dlink")
-
         if dlink:
             return {
-                "title": file_name or "TeraBox File",
+                "title": file_info.get("server_filename") or "TeraBox File",
                 "size": str(file_info.get("size", "Unknown")),
                 "thumb": "",
                 "direct": dlink
@@ -89,13 +65,10 @@ def get_direct_link_cookie(tera_url):
     return None
 
 def get_direct_link(tera_url):
-    # PEHLE COOKIE METHOD TRY KARO
     data = get_direct_link_cookie(tera_url)
     if data:
         print("Success with NDUS cookie")
         return data
-
-    # FAIL HUA TOH PURANE APIS
     headers = {"User-Agent": "Mozilla/5.0"}
     apis = [
         f"https://terabox-dl.hnn.workers.dev/api?url={tera_url}",
@@ -121,7 +94,6 @@ def parse_mb(s):
         s=str(s).lower(); n=float(re.findall(r"[\d\.]+",s)[0]); return n*1024 if "gb" in s else n
     except: return 0
 
-# ================= KEYBOARDS (same) =================
 def pro_welcome_keyboard():
     mk = types.InlineKeyboardMarkup(row_width=2)
     mk.add(types.InlineKeyboardButton("📖 How to Use", callback_data="how_to"), types.InlineKeyboardButton("📢 Official Channel", url=CHANNEL_LINK))
@@ -140,11 +112,10 @@ def main_menu():
     mk.add(types.KeyboardButton("🔗 Share Bot"), types.KeyboardButton("🆘 Support"))
     return mk
 
-# ================= FLASK =================
 @app.route('/')
 def home():
-    status = "NDUS Set ✅" if NDUS else "NDUS Missing ❌"
-    return f"AllTeraBoxBot Pro - Live & Professional - {status}"
+    status = "NDUS Set ✅" if NDUS_COOKIE else "NDUS Missing ❌"
+    return f"AllTeraBoxBot Pro - Live & {status}"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -153,7 +124,6 @@ def webhook():
         bot.process_new_updates([update])
     return 'ok'
 
-# ================= BOT HANDLERS =================
 @bot.message_handler(commands=['start'])
 def start_handler(m):
     if not is_joined(m.from_user.id):
@@ -201,10 +171,8 @@ def file_handler(m):
     title, size_str, thumb, direct = escape(data["title"]), escape(data["size"]), data["thumb"], data["direct"]
     mk = pro_file_keyboard(direct)
     caption = f"<b>🎬 {title}</b>\n\n<b>📁 Size:</b> {size_str}\n\n<b>⏳ Note:</b> <i>Auto-delete after 45 mins</i>\n\n<b>🚀 Powered by AllTeraBox Pro</b>"
-    try:
-        bot.edit_message_text(caption, m.chat.id, wait_msg.message_id, reply_markup=mk, parse_mode="HTML")
-    except:
-        bot.send_message(m.chat.id, caption, reply_markup=mk, parse_mode="HTML")
+    try: bot.edit_message_text(caption, m.chat.id, wait_msg.message_id, reply_markup=mk, parse_mode="HTML")
+    except: bot.send_message(m.chat.id, caption, reply_markup=mk, parse_mode="HTML")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
