@@ -2,62 +2,71 @@ import os, re, requests, telebot, time, threading
 from telebot import types
 from flask import Flask, request
 
-# ================= CONFIG =================
 app = Flask(__name__)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# Yaha fix kiya - sab naam se chalega
-NDUS_COOKIE = os.getenv("NDUS") or os.getenv("NDUS_COOKIE") or os.getenv("TERABOX_COOKIE") or ""
-NDUS = NDUS_COOKIE # dono naam se kaam karega, error nahi ayega
+# NDUS kisi bhi naam se chalega
+RAW_COOKIE = os.getenv("NDUS") or os.getenv("NDUS_COOKIE") or os.getenv("TERABOX_COOKIE") or ""
+
+# Agar full cookie bheja hai to usme se ndus nikal le
+def extract_ndus(cookie_str):
+    if not cookie_str: return ""
+    m = re.search(r'ndus=([A-Za-z0-9_-]+)', cookie_str)
+    if m: return m.group(1)
+    # Agar sirf value hai to wahi return
+    return cookie_str.strip().split()[0]
+
+NDUS = extract_ndus(RAW_COOKIE)
+FULL_COOKIE = RAW_COOKIE if "ndus=" in RAW_COOKIE else f"ndus={NDUS}"
 
 CHANNEL_ID = "@Film4You_Official"
 CHANNEL_LINK = "https://t.me/Film4You_Official"
-BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share"
-RENDER_URL = "https://teraboxbot-25lo.onrender.com"
+RENDER_URL = os.getenv("RENDER_URL") or os.getenv("WEBHOOK_URL") or "https://teraboxbot-261o.onrender.com"
+RENDER_URL = RENDER_URL.rstrip('/')
+
+if not BOT_TOKEN:
+    print("BOT_TOKEN Missing!")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
+# Webhook sahi se set karo
 try:
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=f"{RENDER_URL}/webhook")
-except:
-    pass
-
-# ================= HELPERS =================
-def escape(t): return t.replace("<","").replace(">","") if t else ""
-
-def auto_delete(chat_id, msg_ids, delay=2700):
-    def job():
-        time.sleep(delay)
-        for mid in msg_ids:
-            try: bot.delete_message(chat_id, mid)
-            except: pass
-        try: bot.send_message(chat_id, "🗑️ <b>File Expired</b>\n\nThis file was automatically deleted after 45 minutes due to copyright restrictions.", parse_mode="HTML")
-        except: pass
-    threading.Thread(target=job).start()
+    print(f"Webhook set: {RENDER_URL}/webhook")
+except Exception as e:
+    print(f"Webhook error: {e}")
 
 def get_direct_link_cookie(tera_url):
-    if not NDUS_COOKIE:
+    if not NDUS:
+        print("NDUS Empty")
         return None
     try:
         m = re.search(r'/s/([A-Za-z0-9_-]+)', tera_url)
+        if not m:
+            m = re.search(r'surl=([A-Za-z0-9_-]+)', tera_url)
         if not m: return None
         surl = m.group(1)
+
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Cookie": f"ndus={NDUS_COOKIE}",
-            "Referer": "https://www.terabox.com/"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Cookie": FULL_COOKIE,
+            "Referer": "https://www.terabox.com/",
+            "Host": "www.terabox.com"
         }
         list_url = f"https://www.terabox.com/share/list?app_id=250528&shorturl={surl}&root=1"
-        r = requests.get(list_url, headers=headers, timeout=15).json()
-        if r.get("errno")!= 0 or not r.get("list"): return None
-        file_info = r["list"][0]
+        r = requests.get(list_url, headers=headers, timeout=15)
+        print(r.text[:500])
+        j = r.json()
+        if j.get("errno")!= 0 or not j.get("list"):
+            return None
+        file_info = j["list"][0]
         dlink = file_info.get("dlink")
         if dlink:
             return {
                 "title": file_info.get("server_filename") or "TeraBox File",
                 "size": str(file_info.get("size", "Unknown")),
-                "thumb": "",
                 "direct": dlink
             }
     except Exception as e:
@@ -69,17 +78,18 @@ def get_direct_link(tera_url):
     if data:
         print("Success with NDUS cookie")
         return data
-    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # Fallback APIs
     apis = [
         f"https://terabox-dl.hnn.workers.dev/api?url={tera_url}",
         f"https://teraboxdl.site/api?url={tera_url}",
     ]
     for api_url in apis:
         try:
-            j = requests.get(api_url, headers=headers, timeout=25).json()
+            j = requests.get(api_url, timeout=25).json()
             link = j.get("direct_link") or j.get("download_link") or j.get("dlink") or j.get("url")
             if link:
-                return {"title": j.get("title") or "TeraBox File", "size": j.get("size") or "Unknown", "thumb": j.get("thumb") or "", "direct": link}
+                return {"title": j.get("title") or "TeraBox File", "size": j.get("size") or "Unknown", "direct": link}
         except: continue
     return None
 
@@ -89,90 +99,49 @@ def is_joined(user_id):
         return m.status in ['member','administrator','creator']
     except: return True
 
-def parse_mb(s):
-    try:
-        s=str(s).lower(); n=float(re.findall(r"[\d\.]+",s)[0]); return n*1024 if "gb" in s else n
-    except: return 0
-
-def pro_welcome_keyboard():
-    mk = types.InlineKeyboardMarkup(row_width=2)
-    mk.add(types.InlineKeyboardButton("📖 How to Use", callback_data="how_to"), types.InlineKeyboardButton("📢 Official Channel", url=CHANNEL_LINK))
-    mk.add(types.InlineKeyboardButton("🔗 Share Bot", url=BOT_SHARE_LINK), types.InlineKeyboardButton("🆘 Support", url=CHANNEL_LINK))
-    return mk
-
 def pro_file_keyboard(direct_link):
     mk = types.InlineKeyboardMarkup(row_width=2)
     mk.add(types.InlineKeyboardButton("▶️ Watch Online", url=direct_link), types.InlineKeyboardButton("⬇️ Fast Download", url=direct_link))
     mk.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     return mk
 
-def main_menu():
-    mk = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    mk.add(types.KeyboardButton("📖 How to Use"), types.KeyboardButton("📢 Channel"))
-    mk.add(types.KeyboardButton("🔗 Share Bot"), types.KeyboardButton("🆘 Support"))
-    return mk
-
 @app.route('/')
 def home():
-    status = "NDUS Set ✅" if NDUS_COOKIE else "NDUS Missing ❌"
-    return f"AllTeraBoxBot Pro - Live & {status}"
+    status = "NDUS Set ✅" if NDUS else "NDUS Missing ❌"
+    return f"AllTeraBoxBot Pro - Live & {status} | URL: {RENDER_URL}"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
         update = telebot.types.Update.de_json(request.get_data().decode('utf-8'))
         bot.process_new_updates([update])
+        return 'ok'
     return 'ok'
 
 @bot.message_handler(commands=['start'])
 def start_handler(m):
-    if not is_joined(m.from_user.id):
-        mk = types.InlineKeyboardMarkup()
-        mk.add(types.InlineKeyboardButton("📢 Join Channel - Unlock Access", url=CHANNEL_LINK))
-        mk.add(types.InlineKeyboardButton("✅ I Joined - Continue", callback_data="check_join"))
-        bot.send_message(m.chat.id, "<b>⚠️ Access Restricted</b>\n\nTo use this bot, please join our official channel first.", reply_markup=mk, parse_mode="HTML")
-        return
-    welcome_text = "<b>📦 Welcome to AllTeraBox Pro</b>\n\n<b>🚀 The Fastest & Most Reliable TeraBox Downloader</b>\n\nJust send me any TeraBox link and get instant direct download link."
-    bot.send_message(m.chat.id, welcome_text, reply_markup=main_menu(), parse_mode="HTML")
-    bot.send_message(m.chat.id, "<b>🔧 Quick Access Menu:</b>", reply_markup=pro_welcome_keyboard(), parse_mode="HTML")
-
-@bot.callback_query_handler(func=lambda c: True)
-def callback_handler(c):
-    if c.data == "check_join":
-        if is_joined(c.from_user.id):
-            try: bot.delete_message(c.message.chat.id, c.message.message_id)
-            except: pass
-            start_handler(c.message)
-        else:
-            bot.answer_callback_query(c.id, "❌ You haven't joined yet!", show_alert=True)
-    elif c.data == "how_to":
-        bot.send_message(c.message.chat.id, "<b>📖 How to Use</b>\n\nCopy link > Paste here > Get link", parse_mode="HTML")
-
-@bot.message_handler(func=lambda m: m.text in ["📖 How to Use", "📢 Channel", "🔗 Share Bot", "🆘 Support"])
-def menu_handler(m):
-    if "Channel" in m.text:
-        mk = types.InlineKeyboardMarkup(); mk.add(types.InlineKeyboardButton("📢 Join Film4You Official", url=CHANNEL_LINK))
-        bot.send_message(m.chat.id, "<b>📢 Our Official Channel</b>", reply_markup=mk, parse_mode="HTML")
+    bot.send_message(m.chat.id, f"<b>📦 Welcome to AllTeraBox Pro</b>\n\nJust send TeraBox link.\n\nStatus: {'✅ NDUS OK' if NDUS else '❌ NDUS Missing'}", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: True)
 def file_handler(m):
     if m.text.startswith("/"): return
-    if m.text in ["📖 How to Use","📢 Channel","🔗 Share Bot","🆘 Support"]: return
-    if not is_joined(m.from_user.id): start_handler(m); return
     match = re.search(r'https?://[^\s]+', m.text)
     if not match: return
     url = match.group(0)
     if "tera" not in url.lower(): return
+
     wait_msg = bot.send_message(m.chat.id, "⏳ <b>Processing...</b>", parse_mode="HTML")
     data = get_direct_link(url)
     if not data or not data.get("direct"):
-        bot.edit_message_text("❌ <b>Failed to Fetch</b>\n\nTry again after 30s or check NDUS in Render Env.", m.chat.id, wait_msg.message_id, parse_mode="HTML")
+        bot.edit_message_text("❌ <b>Failed to Fetch</b>\n\n1. Check NDUS in Render Env\n2. Link expire to nahi hai?\n3. Try after 30s", m.chat.id, wait_msg.message_id, parse_mode="HTML")
         return
-    title, size_str, thumb, direct = escape(data["title"]), escape(data["size"]), data["thumb"], data["direct"]
-    mk = pro_file_keyboard(direct)
-    caption = f"<b>🎬 {title}</b>\n\n<b>📁 Size:</b> {size_str}\n\n<b>⏳ Note:</b> <i>Auto-delete after 45 mins</i>\n\n<b>🚀 Powered by AllTeraBox Pro</b>"
-    try: bot.edit_message_text(caption, m.chat.id, wait_msg.message_id, reply_markup=mk, parse_mode="HTML")
-    except: bot.send_message(m.chat.id, caption, reply_markup=mk, parse_mode="HTML")
+
+    mk = pro_file_keyboard(data["direct"])
+    caption = f"<b>🎬 {data['title']}</b>\n\n<b>📁 Size:</b> {data['size']}"
+    try:
+        bot.edit_message_text(caption, m.chat.id, wait_msg.message_id, reply_markup=mk, parse_mode="HTML")
+    except:
+        bot.send_message(m.chat.id, caption, reply_markup=mk, parse_mode="HTML")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
