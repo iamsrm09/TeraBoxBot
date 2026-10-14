@@ -5,7 +5,7 @@ from flask import Flask, request
 # ================= CONFIG =================
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-NDUS = os.getenv("NDUS") or os.getenv("TERABOX_COOKIE") or os.getenv("COOKIE") # <-- naya add kiya
+NDUS_COOKIE = os.getenv("NDUS_COOKIE") or os.getenv("TERABOX_COOKIE") or os.getenv("COOKIE") # <-- naya add kiya
 CHANNEL_ID = "@Film4You_Official"
 CHANNEL_LINK = "https://t.me/Film4You_Official"
 BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share"
