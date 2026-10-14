@@ -5,7 +5,8 @@ import threading
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot is Running!"
+def home():
+    return "Bot is Running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -13,26 +14,29 @@ def run_flask():
 
 threading.Thread(target=run_flask).start()
 
-# --- iske neeche tera wahi purana code ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-... (baaki sab same jo maine diya tha)
+CHANNEL_ID = "@Film4You_Official"
+CHANNEL_LINK = "https://t.me/Film4You_Official"
+BOT_SHARE_LINK = "https://t.me/AllTeraBoxBot?start=share"
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
 APIS = [
     "https://terabox-dl.hydraax.workers.dev/api?url={}",
     "https://terabox.hnn.workers.dev/api?url={}",
-    "https://terabox-api.sirath.workers.dev/api?url={}",
-    "https://teraboxdownloader.online/api/fetch?url={}"
+    "https://terabox-api.sirath.workers.dev/api?url={}"
 ]
 
 def get_direct_link(tera_url):
     for api in APIS:
         try:
             r = requests.get(api.format(tera_url), timeout=20).json()
-            link = r.get("direct_link") or r.get("download_link") or r.get("url") or r.get("link") or r.get("dlink") or r.get("directlink")
+            link = r.get("direct_link") or r.get("download_link") or r.get("url") or r.get("link") or r.get("dlink")
             if link:
                 return {
-                    "title": r.get("title") or r.get("file_name") or r.get("filename") or "TeraBox File",
-                    "size": r.get("size") or r.get("file_size") or r.get("size_str") or "Unknown",
-                    "thumb": r.get("thumbnail") or r.get("thumb") or r.get("image"),
+                    "title": r.get("title") or r.get("file_name") or "TeraBox File",
+                    "size": r.get("size") or r.get("file_size") or "Unknown",
+                    "thumb": r.get("thumbnail") or r.get("thumb"),
                     "direct": link
                 }
         except:
@@ -68,14 +72,8 @@ def welcome_btn():
 
 def main_menu_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(
-        types.KeyboardButton("📩 How to Use"),
-        types.KeyboardButton("📢 Film4You Channel")
-    )
-    markup.add(
-        types.KeyboardButton("🔗 Share Bot"),
-        types.KeyboardButton("📞 Contact")
-    )
+    markup.add(types.KeyboardButton("📩 How to Use"), types.KeyboardButton("📢 Film4You Channel"))
+    markup.add(types.KeyboardButton("🔗 Share Bot"), types.KeyboardButton("📞 Contact"))
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -99,7 +97,7 @@ def cb(c):
         else:
             bot.answer_callback_query(c.id, "❌ Pehle join karo!", show_alert=True)
     if c.data == "how_to":
-        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link / File milega\n\nEx: `https://terasharelink.com/s/...`", parse_mode="Markdown")
+        bot.send_message(c.message.chat.id, "📩 **How to Use**\n\n1. TeraBox link copy karo\n2. Yaha send karo\n3. Direct link / File milega", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "📩 How to Use")
 def howto_btn(m):
@@ -109,11 +107,11 @@ def howto_btn(m):
 def channel_btn(m):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-    bot.send_message(m.chat.id, "📢 **Official Channel Join Karo**", reply_markup=markup)
+    bot.send_message(m.chat.id, "📢 **Official Channel**", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "🔗 Share Bot")
 def share_btn(m):
-    bot.send_message(m.chat.id, f"🔗 **Bot Share Karo:**\n{BOT_SHARE_LINK}")
+    bot.send_message(m.chat.id, f"🔗 **Share:**\n{BOT_SHARE_LINK}")
 
 @bot.message_handler(func=lambda m: m.text == "📞 Contact")
 def contact_btn(m):
@@ -128,35 +126,26 @@ def handle(m):
     match = re.search(r'https?://[^\s]+', m.text)
     if not match: return
     url = match.group(0)
-    if "tera" not in url.lower() and "1024ter" not in url.lower(): return
-
+    if "tera" not in url.lower(): return
     wait = bot.send_message(m.chat.id, "⏳ **Processing...**")
     data = get_direct_link(url)
-
     if not data:
-        bot.edit_message_text("❌ **Failed to fetch link.**\n10 sec baad fir se try karo.", m.chat.id, wait.message_id, parse_mode="Markdown")
+        bot.edit_message_text("❌ **Failed to fetch link.**\n10 sec baad try karo.", m.chat.id, wait.message_id, parse_mode="Markdown")
         return
-
     title = data["title"]
     size_str = data["size"]
     thumb = data["thumb"]
     direct = data["direct"]
     mb = parse_mb(size_str)
-
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("▶️ Watch Online", url=direct),
-        types.InlineKeyboardButton("⬇️ Fast Download", url=direct)
-    )
+    markup.add(types.InlineKeyboardButton("▶️ Watch Online", url=direct), types.InlineKeyboardButton("⬇️ Fast Download", url=direct))
     markup.add(types.InlineKeyboardButton("📢 Film4You Channel", url=CHANNEL_LINK))
-
     caption = f"🎬 **{title}**\n\n📁 **Size:** {size_str}"
-
     if mb > 0 and mb < 500:
         try:
-            bot.edit_message_text(f"{caption}\n\n⏳ **Uploading file...**", m.chat.id, wait.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"{caption}\n\n⏳ **Uploading...**", m.chat.id, wait.message_id, parse_mode="Markdown")
             r = requests.get(direct, stream=True, timeout=200)
-            fname = f"{title[:40]}.mp4".replace("/","")
+            fname = f"{title[:30]}.mp4".replace("/","")
             with open(fname, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024*1024):
                     if chunk: f.write(chunk)
@@ -166,8 +155,7 @@ def handle(m):
             bot.delete_message(m.chat.id, wait.message_id)
             return
         except Exception as e:
-            print(f"Upload fail: {e}")
-
+            print(e)
     try:
         if thumb:
             bot.send_photo(m.chat.id, thumb, caption=caption, reply_markup=markup, parse_mode="Markdown")
@@ -177,5 +165,5 @@ def handle(m):
     except:
         bot.edit_message_text(caption, m.chat.id, wait.message_id, reply_markup=markup, parse_mode="Markdown")
 
-print("Bot Started - Final + Menu")
+print("Bot Started - Final + Menu + Port Fix")
 bot.infinity_polling()
