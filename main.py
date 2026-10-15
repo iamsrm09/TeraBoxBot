@@ -372,15 +372,10 @@ async def error_handler(
 
 
 def main() -> None:
+    
+def main():
     if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN environment variable is required."
-        )
-
-    if FORCE_JOIN_CHANNEL and not FORCE_JOIN_URL:
-        logger.warning(
-            "FORCE_JOIN_URL is empty; users may not see a Join button."
-        )
+        raise RuntimeError("BOT_TOKEN environment variable is required.")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -388,23 +383,27 @@ def main() -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CallbackQueryHandler(
-        check_join,
-        pattern=r"^check_join$",
-    ))
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        process_link,
-    ))
+    app.add_handler(
+        CallbackQueryHandler(check_join, pattern=r"^check_join$")
+    )
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, process_link)
+    )
 
     app.add_error_handler(error_handler)
 
     logger.info("Bot is starting...")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
-    )
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    import sys
+
+    if sys.version_info >= (3, 14):
+        logger.error(
+            "Python 3.14 detected. Use Python 3.12 for this deployment."
+        )
+        raise SystemExit(1)
+
+    asyncio.run(main())
