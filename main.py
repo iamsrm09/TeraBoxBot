@@ -370,5 +370,52 @@ async def error_handler(
     )
 
 
+
+from flask import Flask
+from threading import Thread
+
+health_app = Flask(__name__)
+
+@health_app.route("/")
+def home():
+    return "TeraBox Bot is running!", 200
+
+@health_app.route("/health")
+def health():
+    return {"status": "ok"}, 200
+
+
+def run_health_server():
+    port = int(os.getenv("PORT", "10000"))
+    health_app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False,
+    )
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN environment variable is missing.")
+
+    Thread(target=run_health_server, daemon=True).start()
+
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("id", id_command))
+    application.add_handler(CommandHandler("admin", admin_command))
+
+    application.add_handler(
+        CallbackQueryHandler(check_join, pattern="^check_join$")
+    )
+
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, process_link)
+    )
+
+    application.add_error_handler(error_handler)
+
+    logger.info("Starting Telegram bot polling...")
+    application.run_polling()
