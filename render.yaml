@@ -1,0 +1,18 @@
+
+services:
+  - type: worker
+    name: terabox-telegram-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: FORCE_JOIN_CHANNEL
+        sync: false
+      - key: FORCE_JOIN_URL
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+        
