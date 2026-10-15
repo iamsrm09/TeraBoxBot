@@ -1,341 +1,410 @@
+
 import os
 import re
-import html
-import time
 import logging
 from urllib.parse import urlparse
-import requests
-import telebot
-from telebot import types
-from flask import Flask, request
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.error import TelegramError
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
+
+# ---------------- CONFIGURATION ----------------
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-RENDER_URL = os.getenv("RENDER_URL", "").strip().rstrip("/")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@Film4You_Official").strip()
-CHANNEL_LINK = os.getenv(
-    "CHANNEL_LINK", "https://t.me/Film4You_Official"
-).strip()
-CONTACT_USERNAME = os.getenv(
-    "CONTACT_USERNAME", "iamsrm0"
-).strip().lstrip("@")
-
-RAW_COOKIE = (
-    os.getenv("NDUS_COOKIE") or os.getenv("NDUS") or os.getenv("COOKIE") or ""
-).strip()
-
-PORT = int(os.getenv("PORT", "10000"))
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
-
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is missing.")
-if not RENDER_URL:
-    raise RuntimeError("Set RENDER_URL to your public Render URL.")
+FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL", "").strip()
+FORCE_JOIN_URL = os.getenv("FORCE_JOIN_URL", "").strip()
+ADMIN_IDS = {
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
+}
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO,
 )
-log = logging.getLogger("terabox_bot")
+logger = logging.getLogger("terabox_bot")
 
-app = Flask(__name__)
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-})
+URL_PATTERN = re.compile(r"https?://[^\s<>]+")
 
-# ==========================================
-# MENUS
-# ==========================================
-def main_menu():
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("📥 How to Use", callback_data="help"),
-        types.InlineKeyboardButton("ℹ️ About", callback_data="about"),
-    )
-    kb.add(
-        types.InlineKeyboardButton("📢 Updates Channel", url=CHANNEL_LINK),
-        types.InlineKeyboardButton("💬 Contact Us", url=f"https://t.me/{CONTACT_USERNAME}"),
-    )
-    return kb
+TERABOX_HOSTS = {
+    "terabox.com",
+    "www.terabox.com",
+    "1024terabox.com",
+    "www.1024terabox.com",
+    "teraboxapp.com",
+    "www.teraboxapp.com",
+    "teraboxlink.com",
+    "www.teraboxlink.com",
+}
 
-def join_menu():
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-    kb.add(types.InlineKeyboardButton("✅ Check Joined", callback_data="check_join"))
-    return kb
+VIDEO_EXTENSIONS = (
+    ".mp4", ".m4v", ".mov", ".webm"
+)
 
-# ==========================================
-# CHANNEL MEMBERSHIP
-# ==========================================
-def is_joined(user_id):
+
+def get_host(url: str) -> str:
     try:
-        member = bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ("member", "administrator", "creator")
-    except Exception as exc:
-        log.warning("Membership check failed: %s", type(exc).__name__)
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def is_valid_http_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        return (
+            parsed.scheme in ("http", "https")
+            and bool(parsed.hostname)
+            and not parsed.username
+            and not parsed.password
+        )
+    except ValueError:
         return False
 
-def require_join(message):
-    if is_joined(message.from_user.id):
-        return True
-    bot.send_message(
-        message.chat.id,
-        "🔒 <b>Join our updates channel first!</b>\n\nJoin the channel, then tap Check Joined.",
-        reply_markup=join_menu(),
+
+def is_terabox_url(url: str) -> bool:
+    host = get_host(url)
+    return any(
+        host == domain or host.endswith("." + domain)
+        for domain in TERABOX_HOSTS
     )
+
+
+def is_direct_video_url(url: str) -> bool:
+    if not is_valid_http_url(url):
+        return False
+
+    path = urlparse(url).path.lower()
+    return path.endswith(VIDEO_EXTENSIONS)
+
+
+# ---------------- FORCE JOIN ----------------
+
+async def is_member(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> bool:
+    user = update.effective_user
+
+    if not user:
+        return False
+
+    # Allow the bot owner/admin to test without joining.
+    if user.id in ADMIN_IDS:
+        return True
+
+    if not FORCE_JOIN_CHANNEL:
+        return True
+
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=FORCE_JOIN_CHANNEL,
+            user_id=user.id,
+        )
+        return member.status in ("creator", "administrator", "member")
+    except TelegramError as exc:
+        logger.warning("Membership check failed: %s", exc)
+        return False
+
+
+def join_keyboard() -> InlineKeyboardMarkup:
+    buttons = []
+
+    if FORCE_JOIN_URL:
+        buttons.append([
+            InlineKeyboardButton(
+                "📢 Join Promotion Channel",
+                url=FORCE_JOIN_URL,
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            "✅ I've Joined — Check Again",
+            callback_data="check_join",
+        )
+    ])
+
+    return InlineKeyboardMarkup(buttons)
+
+
+async def require_membership(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> bool:
+    if await is_member(update, context):
+        return True
+
+    text = (
+        "🔒 <b>Join Required</b>\n\n"
+        "Bot use karne se pehle hamara promotion channel join karein. "
+        "Join karne ke baad neeche diye button par tap karein."
+    )
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        if update.callback_query.message:
+            await update.callback_query.message.reply_text(
+                text,
+                reply_markup=join_keyboard(),
+                parse_mode="HTML",
+            )
+    elif update.effective_message:
+        await update.effective_message.reply_text(
+            text,
+            reply_markup=join_keyboard(),
+            parse_mode="HTML",
+        )
+
     return False
 
-# ==========================================
-# LINK VALIDATION
-# ==========================================
-ALLOWED_DOMAINS = ("terabox.com", "terabox.app", "terasharelink.com", "1024tera.com", "teraboxshare.com")
 
-def extract_link(text):
-    if not text:
-        return None
-    match = re.search(r"https?://[^\s<>]+", text)
-    if not match:
-        return None
-    url = match.group(0).rstrip(".,!?)]}")
-    host = (urlparse(url).hostname or "").lower()
-    valid = any(host == domain or host.endswith("." + domain) for domain in ALLOWED_DOMAINS)
-    return url if valid else None
-
-# ==========================================
-# DIRECT LINK FETCHING - FIXED VERSION
-# ==========================================
-API_ENDPOINTS = (
-    "https://terabox-dl.hnn.workers.dev/api",
-    "https://wdzone-terabox-api.vercel.app/api",
-    "https://terabox.hnn.workers.dev/api",
-)
-
-def parse_result(data):
-    if isinstance(data, list):
-        for item in data:
-            result = parse_result(item)
-            if result:
-                return result
-        return None
-    if not isinstance(data, dict):
-        return None
-    direct = (
-        data.get("direct_link") or data.get("download_link") or data.get("dlink")
-        or data.get("downloadUrl") or data.get("download_url") or data.get("link")
-    )
-    if not direct and isinstance(data.get("files"), list) and data["files"]:
-        direct = data["files"][0].get("download_link") or data["files"][0].get("url") or data["files"][0].get("dlink")
-    if not direct and isinstance(data.get("list"), list) and data["list"]:
-        direct = data["list"][0].get("dlink") or data["list"][0].get("download_link")
-
-    if isinstance(direct, str) and direct.startswith("http"):
-        return {
-            "title": str(data.get("title") or data.get("filename") or data.get("server_filename") or "TeraBox File")[:200],
-            "direct": direct,
-            "size": str(data.get("size") or "Unknown"),
-        }
-    for key in ("data", "result", "file", "info", "response"):
-        if isinstance(data.get(key), (dict, list)):
-            result = parse_result(data[key])
-            if result:
-                return result
-    return None
-
-def get_link(url):
-    # 1. Try Public APIs
-    for endpoint in API_ENDPOINTS:
-        try:
-            # GET try
-            r = session.get(endpoint, params={"url": url}, timeout=15)
-            if r.status_code == 200:
-                try:
-                    result = parse_result(r.json())
-                    if result:
-                        log.info("Got result from %s", urlparse(endpoint).hostname)
-                        return result
-                except: pass
-            # POST try
-            r = session.post(endpoint, json={"url": url}, timeout=15)
-            if r.status_code == 200:
-                try:
-                    result = parse_result(r.json())
-                    if result:
-                        log.info("Got result from %s POST", urlparse(endpoint).hostname)
-                        return result
-                except: pass
-        except Exception as e:
-            log.warning("API %s failed: %s", urlparse(endpoint).hostname, type(e).__name__)
-
-    # 2. Cookie fallback - FIXED for errno 105
-    if RAW_COOKIE:
-        try:
-            m = re.search(r"/s/([A-Za-z0-9_-]+)", url) or re.search(r"[?&]surl=([A-Za-z0-9_-]+)", url)
-            if not m:
-                log.warning("Could not extract share ID")
-                return None
-            share_id = m.group(1)
-            log.info("Cookie fallback share_id: %s", share_id)
-
-            cookie_val = RAW_COOKIE
-            if "ndus=" not in cookie_val.lower():
-                cookie_val = f"ndus={cookie_val}"
-            if "lang=" not in cookie_val.lower():
-                cookie_val += "; lang=en"
-
-            # FIXED PARAMS to avoid 105
-            resp = session.get(
-                "https://www.terabox.com/share/list",
-                params={
-                    "app_id": "250528",
-                    "shorturl": share_id,
-                    "root": "1",
-                    "dir": "/",
-                    "order": "time",
-                    "desc": "1",
-                    "web": "1",
-                    "channel": "dubox",
-                    "clienttype": "0",
-                },
-                headers={"Cookie": cookie_val, "Referer": "https://www.terabox.com/"},
-                timeout=15,
-            )
-            log.info("Cookie status %s", resp.status_code)
-            data = resp.json()
-            log.info("Cookie errno %s", data.get("errno"))
-
-            if data.get("errno") == 105:
-                log.warning("NDUS invalid/expired - need fresh NDUS")
-                return None
-            if data.get("errno")!= 0:
-                log.warning("Terabox error %s %s", data.get("errno"), data.get("errmsg"))
-                return None
-
-            files = data.get("list") or []
-            if files and isinstance(files[0], dict):
-                item = files[0]
-                dlink = item.get("dlink")
-                if dlink:
-                    return {
-                        "title": str(item.get("server_filename") or "TeraBox File"),
-                        "direct": dlink,
-                        "size": str(item.get("size") or "Unknown"),
-                    }
-        except Exception as exc:
-            log.warning("Cookie fallback failed: %s", type(exc).__name__)
-    return None
-
-# ==========================================
-# HANDLERS
-# ==========================================
-@app.route("/", methods=["GET", "HEAD"])
-def home():
-    return "TeraBox Bot is running!", 200
-
-@app.route("/health", methods=["GET"])
-def health():
-    return {"status": "ok"}, 200
-
-@bot.message_handler(commands=["start"])
-def start(message):
-    if not require_join(message):
+async def check_join(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if not query:
         return
-    bot.send_message(
-        message.chat.id,
-        "👋 <b>Welcome to TeraBox Link Bot!</b>\n\n📦 Send a supported public TeraBox share link.\n\n⚡ I'll try to fetch the available file information.\n\n⚠️ Results depend on link permissions and external service availability.\n\n👇 Choose an option below:",
-        reply_markup=main_menu(),
-    )
 
-@bot.message_handler(commands=["help"])
-def help_command(message):
-    bot.send_message(
-        message.chat.id,
-        "📥 <b>HOW TO USE</b>\n\n1. Copy a TeraBox share link.\n2. Send it to this bot.\n3. Wait while the link is checked.\n4. If fetching succeeds, use the provided button.\n\n❌ If fetching fails, the link may be unsupported, expired, protected, or the external APIs may be down.",
-        reply_markup=main_menu(),
-    )
+    await query.answer()
 
-@bot.callback_query_handler(func=lambda call: True)
-def callbacks(call):
-    if call.data == "check_join":
-        if is_joined(call.from_user.id):
-            bot.answer_callback_query(call.id, "✅ Membership verified!")
-            try:
-                bot.edit_message_text("✅ <b>You're all set!</b>\n\nSend a supported TeraBox link now.", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
-            except Exception:
-                bot.send_message(call.message.chat.id, "✅ Send a supported TeraBox link now.", reply_markup=main_menu())
-        else:
-            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
-    elif call.data == "help":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📥 <b>How to use</b>\n\nSend a supported public TeraBox share link. Fetching is not guaranteed for every link.", reply_markup=main_menu())
-    elif call.data == "about":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"ℹ️ <b>ABOUT THIS BOT</b>\n\nA Telegram helper for supported TeraBox links.\n\n💬 Contact: @{html.escape(CONTACT_USERNAME)}", reply_markup=main_menu())
-    else:
-        bot.answer_callback_query(call.id)
-
-@bot.message_handler(content_types=["text"])
-def handle_message(message):
-    text = message.text or ""
-    if text.startswith("/"):
-        return
-    url = extract_link(text)
-    if not url:
-        bot.send_message(message.chat.id, "🔗 Please send a supported TeraBox share link.\n\nUse /help for instructions.")
-        return
-    if not require_join(message):
-        return
-    status = bot.send_message(message.chat.id, "⏳ <b>Processing your link...</b>\nPlease wait.")
-    try:
-        result = get_link(url)
-        if not result:
-            bot.edit_message_text(
-                "❌ <b>Failed to fetch this link.</b>\n\nPossible reasons:\n• Link expired or unsupported\n• File requires permission\n• External APIs down\n• NDUS cookie expired (check logs for errno 105)\n\nGet fresh NDUS from terabox.com > F12 > Application > Cookies > ndus",
-                message.chat.id, status.message_id, reply_markup=main_menu(),
-            )
-            return
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("▶️ Open / Download", url=result["direct"]))
-        kb.add(types.InlineKeyboardButton("📢 Updates Channel", url=CHANNEL_LINK))
-        title = html.escape(result["title"])
-        size = html.escape(result["size"])
-        bot.edit_message_text(
-            f"✅ <b>LINK PROCESSED</b>\n\n📄 <b>File:</b> {title}\n📦 <b>Size:</b> {size}\n\nUse the button below if you have permission to access the file.",
-            message.chat.id, status.message_id, reply_markup=kb, disable_web_page_preview=True,
+    if await is_member(update, context):
+        await query.message.reply_text(
+            "✅ Membership verified!\n\n"
+            "Ab apna TeraBox link ya supported direct media URL bhejein."
         )
-    except Exception as exc:
-        log.exception("Link processing failed: %s", type(exc).__name__)
+    else:
+        await query.message.reply_text(
+            "❌ Membership verify nahi hui. Channel join karke phir try karein.",
+            reply_markup=join_keyboard(),
+        )
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    if WEBHOOK_SECRET:
-        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if supplied!= WEBHOOK_SECRET:
-            return "Forbidden", 403
-    try:
-        update = telebot.types.Update.de_json(request.get_data(as_text=True))
-        bot.process_new_updates([update])
-        return "ok", 200
-    except Exception as exc:
-        log.exception("Webhook processing failed: %s", type(exc).__name__)
-        return "error", 500
 
-def configure_webhook():
-    webhook_url = RENDER_URL + "/webhook"
-    try:
-        info = bot.get_webhook_info()
-        if info.url!= webhook_url:
-            bot.delete_webhook(drop_pending_updates=False)
-            time.sleep(0.5)
-            bot.set_webhook(url=webhook_url)
-        log.info("Webhook configured successfully: %s", webhook_url)
-    except Exception:
-        log.exception("Webhook configuration failed.")
-        raise
+# ---------------- BOT COMMANDS ----------------
 
-configure_webhook()
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_membership(update, context):
+        return
+
+    await update.effective_message.reply_text(
+        "👋 Welcome to TeraBox Link Bot!\n\n"
+        "📥 TeraBox shared link bhejein.\n"
+        "▶️ Supported public direct video URL bhejne par "
+        "Telegram playback ki koshish ki jayegi.\n\n"
+        "⚠️ TeraBox shared links ko bina Cookie automatically "
+        "direct download mein convert karna guaranteed nahi hai.\n\n"
+        "Commands:\n"
+        "/start — Start bot\n"
+        "/help — Help\n"
+        "/id — Apni Telegram ID dekhein"
+    )
+
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_membership(update, context):
+        return
+
+    await update.effective_message.reply_text(
+        "📌 How to use\n\n"
+        "1. TeraBox share link bhejein.\n"
+        "2. Bot original share link kholne ka option dega.\n"
+        "3. Public direct video URL supported ho toh bot "
+        "use Telegram mein bhejne ki koshish karega.\n\n"
+        "Private links, login-required files aur unsupported "
+        "formats kaam nahi kar sakte.\n\n"
+        "Bot kisi bhi link ke liye successful conversion "
+        "ki guarantee nahi deta."
+    )
+
+
+async def id_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    user = update.effective_user
+    if user and update.effective_message:
+        await update.effective_message.reply_text(
+            f"Your Telegram ID: {user.id}"
+        )
+
+
+async def admin_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    user = update.effective_user
+
+    if not user or user.id not in ADMIN_IDS:
+        await update.effective_message.reply_text(
+            "⛔ Admin only command."
+        )
+        return
+
+    await update.effective_message.reply_text(
+        "✅ Admin access active.\n"
+        f"Force Join: {FORCE_JOIN_CHANNEL or 'Disabled'}\n"
+        "Cookie integration: Disabled"
+    )
+
+
+# ---------------- LINK PROCESSING ----------------
+
+async def process_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_membership(update, context):
+        return
+
+    message = update.effective_message
+    if not message or not message.text:
+        return
+
+    urls = URL_PATTERN.findall(message.text)
+
+    if not urls:
+        await message.reply_text(
+            "Please ek valid HTTP/HTTPS link bhejein."
+        )
+        return
+
+    # Handle one link per message to avoid ambiguity.
+    url = urls[0].rstrip(".,!?)\"]}'")
+
+    if not is_valid_http_url(url):
+        await message.reply_text("❌ Invalid URL.")
+        return
+
+    if is_terabox_url(url):
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "📂 Open TeraBox Link",
+                    url=url,
+                )
+            ]
+        ])
+
+        await message.reply_text(
+            "🔗 <b>TeraBox link detected</b>\n\n"
+            "Is link ko Cookie ke bina automatically resolve "
+            "karne ke liye supported TeraBox API/integration "
+            "zaroori hai.\n\n"
+            "Filhaal original shared link open kar sakte hain. "
+            "Isse direct download URL generate hone ki guarantee nahi hai.",
+            reply_markup=keyboard,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        return
+
+    if is_direct_video_url(url):
+        status = await message.reply_text(
+            "⏳ Direct video URL detected. Telegram playback "
+            "ki koshish kar raha hoon..."
+        )
+
+        try:
+            # Telegram fetches the public URL. It must be reachable
+            # by Telegram and compatible with Telegram's media limits.
+            await message.reply_video(
+                video=url,
+                caption="▶️ Video",
+                supports_streaming=True,
+                read_timeout=60,
+                write_timeout=60,
+                connect_timeout=30,
+                pool_timeout=30,
+            )
+            await status.delete()
+
+        except TelegramError as exc:
+            logger.warning("Video delivery failed: %s", exc)
+            await status.edit_text(
+                "❌ Telegram is URL se video fetch nahi kar saka.\n\n"
+                "URL private, expired, unsupported ya Telegram ke "
+                "media limits se bahar ho sakta hai."
+            )
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Open Link", url=url)]
+    ])
+
+    await message.reply_text(
+        "Link mil gaya, lekin ye supported direct video URL "
+        "format mein nahi hai.\n\n"
+        "Neeche button se original link open karein.",
+        reply_markup=keyboard,
+        disable_web_page_preview=True,
+    )
+
+
+# ---------------- ERROR HANDLING ----------------
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    logger.error(
+        "Unhandled bot error",
+        exc_info=context.error,
+    )
+
+
+def main() -> None:
+    if not BOT_TOKEN:
+        raise RuntimeError(
+            "BOT_TOKEN environment variable is required."
+        )
+
+    if FORCE_JOIN_CHANNEL and not FORCE_JOIN_URL:
+        logger.warning(
+            "FORCE_JOIN_URL is empty; users may not see a Join button."
+        )
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CallbackQueryHandler(
+        check_join,
+        pattern=r"^check_join$",
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        process_link,
+    ))
+
+    app.add_error_handler(error_handler)
+
+    logger.info("Bot is starting...")
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+    )
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    main()
