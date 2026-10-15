@@ -278,7 +278,19 @@ async def process_link(
     if not message or not message.text:
         return
 
-    urls = URL_PATTERN.findall(message.text)
+    
+urls = URL_PATTERN.findall(message.text or "")
+
+if message.entities:
+    for entity in message.entities:
+        if entity.type == "text_link" and entity.url:
+            urls.append(entity.url)
+
+if message.caption_entities:
+    for entity in message.caption_entities:
+        if entity.type == "text_link" and entity.url:
+            urls.append(entity.url)
+            
 
     if not urls:
         await message.reply_text(
