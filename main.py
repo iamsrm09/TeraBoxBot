@@ -256,10 +256,20 @@ def run_health_server():
     port = int(os.getenv("PORT", "10000"))
     health_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
+import asyncio
+
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
+
+    # Fix for Python 3.14 - event loop banana padega
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     Thread(target=run_health_server, daemon=True).start()
+    
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
@@ -268,5 +278,6 @@ if __name__ == "__main__":
     application.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_link))
     application.add_error_handler(error_handler)
+    
     logger.info("Starting Telegram bot polling...")
     application.run_polling()
