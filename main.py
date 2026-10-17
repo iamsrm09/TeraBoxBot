@@ -254,10 +254,6 @@ application.add_error_handler(error_handler)
 def home():
     return "TeraBox Bot is running!", 200
 
-@health_app.route("/health")
-def health():
-    return {"status": "ok", "api_configured": bool(TERABOX_API_KEY)}, 200
-
 @health_app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -265,9 +261,12 @@ def webhook():
         update = Update.de_json(data, application.bot)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.initialize())
+        # Initialize only once
+        try:
+            loop.run_until_complete(application.initialize())
+        except Exception:
+            pass # Already initialized
         loop.run_until_complete(application.process_update(update))
-        loop.run_until_complete(application.shutdown())
         loop.close()
     except Exception as e:
         logger.error(f"Webhook error: {e}", exc_info=True)
