@@ -28,7 +28,7 @@ ADMIN_IDS = {
 # Professional API Configuration
 TERABOX_API_URL = os.getenv("TERABOX_DL_API_URL", "https://api.teraboxdl.site/v1/api").strip()
 TERABOX_API_KEY = os.getenv("TERABOX_DL_API_KEY", "").strip()
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip() # WEBHOOK ADDED
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -241,8 +241,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ---------------- HEALTH SERVER + WEBHOOK ----------------
 health_app = Flask(__name__)
-
-# Global application object for webhook
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
@@ -260,29 +258,31 @@ def home():
 def health():
     return {"status": "ok", "api_configured": bool(TERABOX_API_KEY)}, 200
 
-# --- WEBHOOK ROUTES ADDED (NO CHANGE TO YOUR CODE) ---
 @health_app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
-        # For webhook, we need to run async handling
-        asyncio.run(application.process_update(update))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.process_update(update))
+        loop.run_until_complete(application.shutdown())
+        loop.close()
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {e}", exc_info=True)
     return "ok", 200
 
 @health_app.route("/set-webhook")
 def set_webhook_route():
     if not WEBHOOK_URL:
-        return "WEBHOOK_URL env is missing. Add https://teraboxbot-251o.onrender.com/webhook in env", 400
+        return "WEBHOOK_URL env missing. Add https://teraboxbot-251o.onrender.com/webhook", 400
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
         r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}", timeout=10)
         return r.text, 200
     except Exception as e:
         return str(e), 500
-# --- END WEBHOOK ROUTES ---
 
 def run_health_server():
     port = int(os.getenv("PORT", "10000"))
@@ -297,13 +297,11 @@ if __name__ == "__main__":
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    # If WEBHOOK_URL is set, run only Flask (no polling - fixes Conflict error)
     if WEBHOOK_URL:
         logger.info(f"Starting in WEBHOOK mode: {WEBHOOK_URL}")
         port = int(os.getenv("PORT", "10000"))
         health_app.run(host="0.0.0.0", port=port, use_reloader=False)
     else:
-        # Your original polling mode
         Thread(target=run_health_server, daemon=True).start()
         logger.info("Starting Telegram bot polling...")
         application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
